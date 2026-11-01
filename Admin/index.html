@@ -84,7 +84,9 @@ h2{font-size:17px;margin:0 0 4px}
         <input id="fFile" type="file" accept="image/*">
         <button class="alt" id="upBtn" style="flex:0 0 auto">Upload image</button>
       </div>
-      <div class="hint">Upload needs Firebase Storage. If it is not available, host the image anywhere and paste its link above.</div>
+      <div class="row" style="margin-top:8px"><button class="alt" id="dbBtn">Attach without Storage</button></div>
+      <div class="hint" id="upMsg" style="margin-top:6px"></div>
+      <div class="hint"><b>Upload image</b> needs Firebase Storage. <b>Attach without Storage</b> stores a small copy of the picture inside the database (fine for a few images, makes the app load slower if used for many). Or paste a link above.</div>
       <div class="preview" id="prev">No image</div>
       <div class="chk"><input id="fPop" type="checkbox"><span>Popular badge</span></div>
       <div class="chk"><input id="fShow" type="checkbox" checked><span>Show in app</span></div>
@@ -179,7 +181,7 @@ function render() {
   rows.forEach(x => {
     const c = document.createElement('div'); c.className = 'card item';
     const th = document.createElement('div'); th.className = 'thumb';
-    if (x.image && /^https?:/i.test(x.image)) th.style.backgroundImage = 'url("' + x.image.replace(/"/g, '%22') + '")'; else th.textContent = x.image ? 'in app' : 'no image';
+    if (x.image && /^(https?:|data:image)/i.test(x.image)) th.style.backgroundImage = 'url("' + x.image.replace(/"/g, '%22') + '")'; else th.textContent = x.image ? 'in app' : 'no image';
     const tx = document.createElement('div');
     const b = document.createElement('b'); b.textContent = x.title || '(no title)';
     const s = document.createElement('small'); s.textContent = x.category || 'General';
@@ -197,7 +199,7 @@ $('q').oninput = render;
 
 function setPrev(url) {
   const p = $('prev');
-  if (url && /^https?:/i.test(url)) { p.style.backgroundImage = 'url("' + url.replace(/"/g, '%22') + '")'; p.textContent = ''; }
+  if (url && /^(https?:|data:image)/i.test(url)) { p.style.backgroundImage = 'url("' + url.replace(/"/g, '%22') + '")'; p.textContent = ''; }
   else { p.style.backgroundImage = ''; p.textContent = url ? 'Image is bundled in the app' : 'No image'; }
 }
 $('fImage').oninput = () => setPrev($('fImage').value.trim());
@@ -252,19 +254,38 @@ function shrink(file, maxW = 720, q = 0.82) {
     img.onerror = () => rej(new Error('Not a readable image')); img.src = url;
   });
 }
+function withTimeout(p, ms, msg) { return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(msg)), ms))]); }
+function blobToDataURL(b) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(new Error('Read failed')); r.readAsDataURL(b); }); }
+function busy(on, msg) { $('upBtn').disabled = on; $('dbBtn').disabled = on; $('upMsg').textContent = msg || ''; }
 $('upBtn').onclick = async () => {
   const f = $('fFile').files[0];
-  if (!f) { $('formErr').textContent = 'Choose an image first.'; return; }
-  if (!storage) { $('formErr').textContent = 'Firebase Storage is not available. Paste an image link instead.'; return; }
-  $('upBtn').disabled = true; $('formErr').textContent = '';
+  $('formErr').textContent = '';
+  if (!f) { $('formErr').textContent = 'Choose an image first (tap Choose File).'; return; }
+  if (!storage) { $('formErr').textContent = 'Firebase Storage is not available. Use "Attach without Storage" or paste a link.'; return; }
+  busy(true, 'Preparing image…');
   try {
     const blob = await shrink(f);
+    busy(true, 'Uploading ' + Math.round(blob.size / 1024) + ' KB to Firebase Storage…');
     const r = sref(storage, 'covers/' + Date.now() + '.jpg');
-    await uploadBytes(r, blob, { contentType: 'image/jpeg' });
-    const url = await getDownloadURL(r);
-    $('fImage').value = url; setPrev(url); toast('Image uploaded ✓');
-  } catch (e) { $('formErr').textContent = 'Upload failed: ' + why(e) + '\nIf Storage is not enabled on your plan, host the image elsewhere and paste its link.'; }
-  $('upBtn').disabled = false;
+    await withTimeout(uploadBytes(r, blob, { contentType: 'image/jpeg' }), 20000, 'Storage did not respond in 20 seconds. Storage is probably not enabled or not allowed on your plan.');
+    const url = await withTimeout(getDownloadURL(r), 10000, 'Could not get the image link.');
+    $('fImage').value = url; setPrev(url); toast('Image uploaded ✓'); busy(false, 'Uploaded. Now tap Save.');
+  } catch (e) {
+    busy(false, '');
+    $('formErr').textContent = 'Upload failed: ' + why(e) + '\nTry "Attach without Storage", or host the image elsewhere and paste its link.';
+  }
+};
+$('dbBtn').onclick = async () => {
+  const f = $('fFile').files[0];
+  $('formErr').textContent = '';
+  if (!f) { $('formErr').textContent = 'Choose an image first (tap Choose File).'; return; }
+  busy(true, 'Preparing image…');
+  try {
+    const blob = await shrink(f, 420, 0.7);
+    const url = await blobToDataURL(blob);
+    $('fImage').value = url; setPrev(url);
+    busy(false, 'Attached (' + Math.round(blob.size / 1024) + ' KB). Now tap Save.'); toast('Image attached ✓');
+  } catch (e) { busy(false, ''); $('formErr').textContent = 'Could not attach: ' + why(e); }
 };
 
 /* ---------- settings ---------- */
