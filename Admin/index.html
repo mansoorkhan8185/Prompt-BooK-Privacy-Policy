@@ -39,6 +39,8 @@ button:disabled{opacity:.55}
 .err{color:var(--red);font-size:14px;margin-top:10px;white-space:pre-wrap}
 h2{font-size:17px;margin:0 0 4px}
 [hidden]{display:none!important}
+.tabs button{font-size:13px;padding:11px 6px}
+.badge.new{background:#fee2e2;color:#b91c1c}
 </style>
 </head>
 <body>
@@ -62,7 +64,7 @@ h2{font-size:17px;margin:0 0 4px}
 
 <!-- app -->
 <div id="appBox" hidden>
-  <div class="tabs"><button id="tPrompts" class="on">Prompts</button><button id="tApps">More apps</button><button id="tSettings">Settings</button></div>
+  <div class="tabs"><button id="tPrompts" class="on">Prompts</button><button id="tApps">Apps</button><button id="tBanners">Banners</button><button id="tSettings">Settings</button></div>
 
   <section id="pPrompts">
     <div class="row" style="margin-bottom:12px">
@@ -89,6 +91,7 @@ h2{font-size:17px;margin:0 0 4px}
       <div class="hint"><b>Upload image</b> needs Firebase Storage. <b>Attach without Storage</b> stores a small copy of the picture inside the database (fine for a few images, makes the app load slower if used for many). Or paste a link above.</div>
       <div class="preview" id="prev">No image</div>
       <div class="chk"><input id="fPop" type="checkbox"><span>Popular badge</span></div>
+      <div class="chk"><input id="fNew" type="checkbox"><span>Show red "New" badge</span></div>
       <div class="chk"><input id="fShow" type="checkbox" checked><span>Show in app</span></div>
       <div class="row" style="margin-top:14px">
         <button id="saveBtn">Save</button>
@@ -119,6 +122,34 @@ h2{font-size:17px;margin:0 0 4px}
       <div class="chk"><input id="aShow" type="checkbox" checked><span>Show in app</span></div>
       <div class="row" style="margin-top:14px"><button id="aSave">Save</button><button class="alt" id="aCancel">Cancel</button><button class="red" id="aDel" hidden>Delete</button></div>
       <div class="err" id="aErr"></div>
+    </div>
+  </section>
+
+  <section id="pBanners" hidden>
+    <div class="card"><h2>New categories (red "New" badge)</h2>
+      <p class="hint">Type category names exactly as in your prompts, separated by commas. Leave empty for none.</p>
+      <input id="newCats" type="text" placeholder="Product &amp; Food, Cinematic">
+      <div class="row" style="margin-top:12px"><button id="saveNewCats">Save new categories</button></div></div>
+    <div class="card"><h2>Home banners</h2>
+      <p class="hint">Banners you add show first in the slider. The app also adds slides for new categories and new prompts automatically.</p>
+      <div class="row"><button id="addBan" style="flex:0 0 auto">+ Add banner</button></div></div>
+    <div id="banList"></div>
+  </section>
+
+  <section id="bForm" hidden>
+    <div class="card">
+      <h2 id="bTitleH">Add banner</h2>
+      <label>Title</label><input id="bTitle" type="text">
+      <label>Text (optional)</label><input id="bText" type="text">
+      <label>Small label (optional, e.g. OFFER)</label><input id="bLabel" type="text">
+      <label>Open category when tapped (optional)</label><input id="bCat" type="text" list="cats">
+      <label>OR open a link when tapped (optional)</label><input id="bUrl" type="text" placeholder="https://…">
+      <label>Background image link (optional)</label><input id="bImg" type="text" placeholder="https://…">
+      <div class="row" style="margin-top:8px"><input id="bFile" type="file" accept="image/*"><button class="alt" id="bAttach" style="flex:0 0 auto">Attach image</button></div>
+      <div class="hint" id="bMsg"></div>
+      <div class="chk"><input id="bShow" type="checkbox" checked><span>Show in app</span></div>
+      <div class="row" style="margin-top:14px"><button id="bSave">Save</button><button class="alt" id="bCancel">Cancel</button><button class="red" id="bDel" hidden>Delete</button></div>
+      <div class="err" id="bErr"></div>
     </div>
   </section>
 
@@ -176,15 +207,16 @@ $('loginBtn').onclick = async () => {
 $('outBtn').onclick = () => signOut(auth);
 onAuthStateChanged(auth, u => {
   show('loginBox', !u); show('appBox', !!u); show('outBtn', !!u);
-  if (u) { loadPrompts(); loadSettings(); loadApps(); }
+  if (u) { loadPrompts(); loadSettings(); loadApps(); loadBanners(); }
 });
 
 /* ---------- tabs ---------- */
 function tab(name) {
-  $('tPrompts').classList.toggle('on', name === 'p'); $('tApps').classList.toggle('on', name === 'a'); $('tSettings').classList.toggle('on', name === 's');
-  show('pPrompts', name === 'p'); show('pApps', name === 'a'); show('pSettings', name === 's'); show('pForm', false); show('aForm', false);
+  $('tPrompts').classList.toggle('on', name === 'p'); $('tApps').classList.toggle('on', name === 'a'); $('tBanners').classList.toggle('on', name === 'b'); $('tSettings').classList.toggle('on', name === 's');
+  show('pPrompts', name === 'p'); show('pApps', name === 'a'); show('pBanners', name === 'b'); show('pSettings', name === 's');
+  show('pForm', false); show('aForm', false); show('bForm', false);
 }
-$('tPrompts').onclick = () => tab('p'); $('tApps').onclick = () => tab('a'); $('tSettings').onclick = () => tab('s');
+$('tPrompts').onclick = () => tab('p'); $('tApps').onclick = () => tab('a'); $('tBanners').onclick = () => tab('b'); $('tSettings').onclick = () => tab('s');
 
 /* ---------- prompts ---------- */
 async function loadPrompts() {
@@ -210,6 +242,7 @@ function render() {
     const s = document.createElement('small'); s.textContent = x.category || 'General';
     const bd = document.createElement('div');
     if (x.popular === true || x.popular === 'yes') { const p = document.createElement('span'); p.className = 'badge'; p.textContent = 'Popular'; bd.appendChild(p); }
+    if (x.isNew === true || x.isNew === 'yes') { const p = document.createElement('span'); p.className = 'badge new'; p.textContent = 'New'; bd.appendChild(p); }
     if (x.show === false || x.show === 'no') { const p = document.createElement('span'); p.className = 'badge off'; p.textContent = 'Hidden'; bd.appendChild(p); }
     tx.append(b, s, bd); c.append(th, tx);
     c.onclick = () => openForm(x);
@@ -235,6 +268,7 @@ function openForm(x) {
   $('fPrompt').value = x ? (x.prompt || '') : '';
   $('fImage').value = x ? (x.image || '') : '';
   $('fPop').checked = x ? (x.popular === true || x.popular === 'yes') : false;
+  $('fNew').checked = x ? (x.isNew === true || x.isNew === 'yes') : false;
   $('fShow').checked = x ? !(x.show === false || x.show === 'no') : true;
   $('fFile').value = ''; $('formErr').textContent = '';
   setPrev($('fImage').value);
@@ -247,7 +281,7 @@ $('saveBtn').onclick = async () => {
   const o = {
     title: $('fTitle').value.trim(), category: $('fCat').value.trim() || 'General',
     image: $('fImage').value.trim(), prompt: $('fPrompt').value.trim(),
-    popular: $('fPop').checked, show: $('fShow').checked
+    popular: $('fPop').checked, isNew: $('fNew').checked, show: $('fShow').checked
   };
   if (!o.title || !o.prompt) { $('formErr').textContent = 'Title and prompt text are required.'; return; }
   $('saveBtn').disabled = true; $('formErr').textContent = '';
@@ -371,6 +405,63 @@ $('aSave').onclick = async () => {
 $('aDel').onclick = async () => {
   if (!confirm('Delete this app?')) return;
   try { await remove(ref(db, 'settings/moreApps/' + appKey)); toast('Deleted'); await loadApps(); $('aCancel').click(); } catch (e) { $('aErr').textContent = why(e); }
+};
+
+/* ---------- banners + new categories ---------- */
+let bans = [], banKey = null;
+async function loadBanners() {
+  try {
+    const v = (await get(ref(db, 'settings/banners'))).val(); bans = [];
+    if (Array.isArray(v)) v.forEach((x, i) => { if (x) bans.push({ key: String(i), ...x }); });
+    else if (v) Object.keys(v).forEach(k => { if (v[k]) bans.push({ key: k, ...v[k] }); });
+    const nc = (await get(ref(db, 'settings/newCategories'))).val();
+    $('newCats').value = !nc ? '' : (Array.isArray(nc) ? nc : Object.values(nc)).join(', ');
+    renderBans();
+  } catch (e) { toast(why(e).slice(0, 120)); }
+}
+function renderBans() {
+  const box = $('banList'); box.innerHTML = '';
+  if (!bans.length) { const p = document.createElement('p'); p.className = 'hint'; p.textContent = 'No custom banners yet.'; box.appendChild(p); }
+  bans.forEach(x => {
+    const c = document.createElement('div'); c.className = 'card item';
+    const tx = document.createElement('div'); const b = document.createElement('b'); b.textContent = x.title || '(no title)';
+    const s = document.createElement('small'); s.textContent = x.text || ''; const bd = document.createElement('div');
+    if (x.show === false) { const p = document.createElement('span'); p.className = 'badge off'; p.textContent = 'Hidden'; bd.appendChild(p); }
+    tx.append(b, s, bd); c.append(tx); c.onclick = () => openBan(x); box.appendChild(c);
+  });
+}
+function openBan(x) {
+  banKey = x ? x.key : null; $('bTitleH').textContent = x ? 'Edit banner' : 'Add banner';
+  $('bTitle').value = x ? (x.title || '') : ''; $('bText').value = x ? (x.text || '') : ''; $('bLabel').value = x ? (x.label || '') : '';
+  $('bCat').value = x ? (x.category || '') : ''; $('bUrl').value = x ? (x.url || '') : ''; $('bImg').value = x ? (x.image || '') : '';
+  $('bShow').checked = x ? x.show !== false : true; $('bFile').value = ''; $('bErr').textContent = ''; $('bMsg').textContent = '';
+  show('bDel', !!x); show('pBanners', false); show('bForm', true); window.scrollTo(0, 0);
+}
+$('addBan').onclick = () => openBan(null);
+$('bCancel').onclick = () => { show('bForm', false); show('pBanners', true); };
+$('bAttach').onclick = async () => {
+  const f = $('bFile').files[0]; $('bErr').textContent = '';
+  if (!f) { $('bErr').textContent = 'Choose an image first.'; return; }
+  try { const blob = await shrink(f, 640, 0.7); $('bImg').value = await blobToDataURL(blob); $('bMsg').textContent = 'Attached (' + Math.round(blob.size / 1024) + ' KB). Now tap Save.'; }
+  catch (e) { $('bErr').textContent = why(e); }
+};
+$('bSave').onclick = async () => {
+  const o = { title: $('bTitle').value.trim(), text: $('bText').value.trim(), label: $('bLabel').value.trim(), category: $('bCat').value.trim(), url: $('bUrl').value.trim(), image: $('bImg').value.trim(), show: $('bShow').checked };
+  if (!o.title) { $('bErr').textContent = 'Title is required.'; return; }
+  $('bSave').disabled = true; $('bErr').textContent = '';
+  try {
+    if (banKey !== null) await set(ref(db, 'settings/banners/' + banKey), o); else await set(push(ref(db, 'settings/banners')), o);
+    toast('Saved ✓'); await loadBanners(); $('bCancel').click();
+  } catch (e) { $('bErr').textContent = why(e); }
+  $('bSave').disabled = false;
+};
+$('bDel').onclick = async () => {
+  if (!confirm('Delete this banner?')) return;
+  try { await remove(ref(db, 'settings/banners/' + banKey)); toast('Deleted'); await loadBanners(); $('bCancel').click(); } catch (e) { $('bErr').textContent = why(e); }
+};
+$('saveNewCats').onclick = async () => {
+  const list = $('newCats').value.split(',').map(s => s.trim()).filter(Boolean);
+  try { await set(ref(db, 'settings/newCategories'), list.length ? list : null); toast('Saved ✓'); } catch (e) { toast(why(e).slice(0, 120)); }
 };
 
 /* ---------- settings ---------- */
