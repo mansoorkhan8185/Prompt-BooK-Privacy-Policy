@@ -62,7 +62,7 @@ h2{font-size:17px;margin:0 0 4px}
 
 <!-- app -->
 <div id="appBox" hidden>
-  <div class="tabs"><button id="tPrompts" class="on">Prompts</button><button id="tSettings">Settings</button></div>
+  <div class="tabs"><button id="tPrompts" class="on">Prompts</button><button id="tApps">More apps</button><button id="tSettings">Settings</button></div>
 
   <section id="pPrompts">
     <div class="row" style="margin-bottom:12px">
@@ -96,6 +96,29 @@ h2{font-size:17px;margin:0 0 4px}
         <button class="red" id="delBtn" hidden>Delete</button>
       </div>
       <div class="err" id="formErr"></div>
+    </div>
+  </section>
+
+  <section id="pApps" hidden>
+    <div class="row" style="margin-bottom:12px"><button id="addApp" style="flex:0 0 auto">+ Add app</button></div>
+    <div class="hint" id="appCount" style="margin-bottom:10px"></div>
+    <div id="appList"></div>
+  </section>
+
+  <section id="aForm" hidden>
+    <div class="card">
+      <h2 id="aTitle">Add app</h2>
+      <label>App name</label><input id="aName" type="text">
+      <label>Short description</label><input id="aDesc" type="text">
+      <label>Store link (Play Store or AppGallery)</label><input id="aUrl" type="text" placeholder="https://play.google.com/store/apps/details?id=…">
+      <label>Button text (optional)</label><input id="aBtn" type="text" placeholder="Get app">
+      <label>Icon link (https://…)</label><input id="aIcon" type="text" placeholder="https://…">
+      <div class="row" style="margin-top:8px"><input id="aFile" type="file" accept="image/*"><button class="alt" id="aAttach" style="flex:0 0 auto">Attach icon</button></div>
+      <div class="hint">Attach icon stores a small copy of the picture in the database. Or paste a link above.</div>
+      <div class="preview" id="aPrev" style="width:90px;height:90px">No icon</div>
+      <div class="chk"><input id="aShow" type="checkbox" checked><span>Show in app</span></div>
+      <div class="row" style="margin-top:14px"><button id="aSave">Save</button><button class="alt" id="aCancel">Cancel</button><button class="red" id="aDel" hidden>Delete</button></div>
+      <div class="err" id="aErr"></div>
     </div>
   </section>
 
@@ -153,15 +176,15 @@ $('loginBtn').onclick = async () => {
 $('outBtn').onclick = () => signOut(auth);
 onAuthStateChanged(auth, u => {
   show('loginBox', !u); show('appBox', !!u); show('outBtn', !!u);
-  if (u) { loadPrompts(); loadSettings(); }
+  if (u) { loadPrompts(); loadSettings(); loadApps(); }
 });
 
 /* ---------- tabs ---------- */
 function tab(name) {
-  $('tPrompts').classList.toggle('on', name === 'p'); $('tSettings').classList.toggle('on', name === 's');
-  show('pPrompts', name === 'p'); show('pSettings', name === 's'); show('pForm', false);
+  $('tPrompts').classList.toggle('on', name === 'p'); $('tApps').classList.toggle('on', name === 'a'); $('tSettings').classList.toggle('on', name === 's');
+  show('pPrompts', name === 'p'); show('pApps', name === 'a'); show('pSettings', name === 's'); show('pForm', false); show('aForm', false);
 }
-$('tPrompts').onclick = () => tab('p'); $('tSettings').onclick = () => tab('s');
+$('tPrompts').onclick = () => tab('p'); $('tApps').onclick = () => tab('a'); $('tSettings').onclick = () => tab('s');
 
 /* ---------- prompts ---------- */
 async function loadPrompts() {
@@ -286,6 +309,68 @@ $('dbBtn').onclick = async () => {
     $('fImage').value = url; setPrev(url);
     busy(false, 'Attached (' + Math.round(blob.size / 1024) + ' KB). Now tap Save.'); toast('Image attached ✓');
   } catch (e) { busy(false, ''); $('formErr').textContent = 'Could not attach: ' + why(e); }
+};
+
+/* ---------- more apps ---------- */
+let apps = [], appKey = null;
+async function loadApps() {
+  try {
+    const v = (await get(ref(db, 'settings/moreApps'))).val();
+    apps = [];
+    if (Array.isArray(v)) v.forEach((x, i) => { if (x) apps.push({ key: String(i), ...x }); });
+    else if (v) Object.keys(v).forEach(k => { if (v[k]) apps.push({ key: k, ...v[k] }); });
+    renderApps();
+  } catch (e) { $('appCount').textContent = why(e); }
+}
+function renderApps() {
+  $('appCount').textContent = apps.length + ' app(s)';
+  const box = $('appList'); box.innerHTML = '';
+  apps.forEach(x => {
+    const c = document.createElement('div'); c.className = 'card item';
+    const th = document.createElement('div'); th.className = 'thumb'; th.style.height = '56px';
+    if (x.icon && /^(https?:|data:image)/i.test(x.icon)) th.style.backgroundImage = 'url("' + x.icon.replace(/"/g, '%22') + '")'; else th.textContent = 'no icon';
+    const tx = document.createElement('div'); const b = document.createElement('b'); b.textContent = x.name || '(no name)';
+    const s = document.createElement('small'); s.textContent = x.description || x.url || '';
+    const bd = document.createElement('div');
+    if (x.show === false) { const p = document.createElement('span'); p.className = 'badge off'; p.textContent = 'Hidden'; bd.appendChild(p); }
+    tx.append(b, s, bd); c.append(th, tx); c.onclick = () => openApp(x); box.appendChild(c);
+  });
+}
+function setAPrev(u) {
+  const p = $('aPrev');
+  if (u && /^(https?:|data:image)/i.test(u)) { p.style.backgroundImage = 'url("' + u.replace(/"/g, '%22') + '")'; p.textContent = ''; } else { p.style.backgroundImage = ''; p.textContent = 'No icon'; }
+}
+$('aIcon').oninput = () => setAPrev($('aIcon').value.trim());
+function openApp(x) {
+  appKey = x ? x.key : null; $('aTitle').textContent = x ? 'Edit app' : 'Add app';
+  $('aName').value = x ? (x.name || '') : ''; $('aDesc').value = x ? (x.description || '') : '';
+  $('aUrl').value = x ? (x.url || '') : ''; $('aBtn').value = x ? (x.buttonText || '') : '';
+  $('aIcon').value = x ? (x.icon || '') : ''; $('aShow').checked = x ? x.show !== false : true;
+  $('aFile').value = ''; $('aErr').textContent = ''; setAPrev($('aIcon').value);
+  show('aDel', !!x); show('pApps', false); show('aForm', true); window.scrollTo(0, 0);
+}
+$('addApp').onclick = () => openApp(null);
+$('aCancel').onclick = () => { show('aForm', false); show('pApps', true); };
+$('aAttach').onclick = async () => {
+  const f = $('aFile').files[0]; $('aErr').textContent = '';
+  if (!f) { $('aErr').textContent = 'Choose an image first.'; return; }
+  try { const url = await blobToDataURL(await shrink(f, 192, 0.8)); $('aIcon').value = url; setAPrev(url); toast('Icon attached ✓'); }
+  catch (e) { $('aErr').textContent = why(e); }
+};
+$('aSave').onclick = async () => {
+  const o = { name: $('aName').value.trim(), description: $('aDesc').value.trim(), url: $('aUrl').value.trim(), buttonText: $('aBtn').value.trim(), icon: $('aIcon').value.trim(), show: $('aShow').checked };
+  if (!o.name || !o.url) { $('aErr').textContent = 'App name and store link are required.'; return; }
+  $('aSave').disabled = true; $('aErr').textContent = '';
+  try {
+    if (appKey !== null) await set(ref(db, 'settings/moreApps/' + appKey), o);
+    else await set(push(ref(db, 'settings/moreApps')), o);
+    toast('Saved ✓'); await loadApps(); $('aCancel').click();
+  } catch (e) { $('aErr').textContent = why(e); }
+  $('aSave').disabled = false;
+};
+$('aDel').onclick = async () => {
+  if (!confirm('Delete this app?')) return;
+  try { await remove(ref(db, 'settings/moreApps/' + appKey)); toast('Deleted'); await loadApps(); $('aCancel').click(); } catch (e) { $('aErr').textContent = why(e); }
 };
 
 /* ---------- settings ---------- */
