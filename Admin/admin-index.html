@@ -74,7 +74,8 @@ h2{font-size:17px;margin:0 0 4px}
     </div>
     <div class="row" style="margin-bottom:12px">
       <select id="flt"><option value="all">All prompts</option><option value="auto">Auto-generated only</option><option value="manual">Manual only</option><option value="hidden">Hidden only</option></select>
-      <button class="alt" id="genBtn" style="flex:0 0 auto">Generate now</button>
+      <button class="alt" id="genBtn" style="flex:0 0 auto">Run generator</button>
+      <button class="alt" id="clrBtn" style="flex:0 0 auto">Clear broken images</button>
     </div>
     <div class="hint" id="count" style="margin-bottom:10px"></div>
     <div id="list"></div>
@@ -261,23 +262,26 @@ function render() {
 $('q').oninput = render;
 $('flt').onchange = render;
 
-/* Generate now: calls the Netlify function (only the admin account is accepted) */
-$('genBtn').onclick = async () => {
-  let site = ''; try { site = localStorage.getItem('genSite') || ''; } catch (e) {}
-  const v = prompt('Your Netlify site URL (for example https://my-prompts.netlify.app):', site);
-  if (!v) return;
-  site = v.trim().replace(/\/+$/, '');
-  try { localStorage.setItem('genSite', site); } catch (e) {}
-  const btn = $('genBtn'); btn.disabled = true; btn.textContent = 'Generating…';
+/* Clear broken Pollinations images (rate-limited) so the app shows its placeholder */
+$('clrBtn').onclick = async () => {
+  const bad = items.filter(x => /pollinations\.ai/i.test(x.image || ''));
+  if (!bad.length) { toast('No Pollinations images found'); return; }
+  if (!confirm('Remove the image from ' + bad.length + ' prompts that use Pollinations links?')) return;
   try {
-    const token = await auth.currentUser.getIdToken(true);
-    const r = await fetch(site + '/.netlify/functions/generate-now', { method: 'POST', headers: { Authorization: 'Bearer ' + token } });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok || !j.success) throw new Error(j.error || ('HTTP ' + r.status));
-    toast('Added ' + j.saved + ' prompts (' + j.category + ')');
-    loadPrompts();
-  } catch (e) { alert('Could not generate: ' + (e.message || e)); }
-  btn.disabled = false; btn.textContent = 'Generate now';
+    for (const x of bad) await set(ref(db, 'prompts/' + x.key + '/image'), '');
+    toast('Cleared ' + bad.length + ' images'); loadPrompts();
+  } catch (e) { alert(why(e)); }
+};
+
+/* Run generator: opens the GitHub Actions page where you tap "Run workflow" */
+$('genBtn').onclick = () => {
+  let repo = ''; try { repo = localStorage.getItem('genRepo') || ''; } catch (e) {}
+  const v = prompt('Your generator repo on GitHub (owner/name):', repo || 'mansoorkhan8185/prompt-book-auto');
+  if (!v) return;
+  repo = v.trim().replace(/^https?:\/\/github\.com\//i, '').replace(/^\/+|\/+$/g, '');
+  try { localStorage.setItem('genRepo', repo); } catch (e) {}
+  window.open('https://github.com/' + repo + '/actions/workflows/generate.yml', '_blank');
+  toast('Tap "Run workflow", then come back and refresh');
 };
 
 function setPrev(url) {
