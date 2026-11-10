@@ -65,7 +65,7 @@ h2{font-size:17px;margin:0 0 4px}
 
 <!-- app -->
 <div id="appBox" hidden>
-  <div class="tabs"><button id="tPrompts" class="on">Prompts</button><button id="tApps">Apps</button><button id="tBanners">Banners</button><button id="tSettings">Settings</button></div>
+  <div class="tabs"><button id="tPrompts" class="on">Prompts</button><button id="tApps">Apps</button><button id="tBanners">Banners</button><button id="tSettings">Settings</button><button id="tGen">Auto</button></div>
 
   <section id="pPrompts">
     <div class="row" style="margin-bottom:12px">
@@ -160,6 +160,31 @@ h2{font-size:17px;margin:0 0 4px}
     </div>
   </section>
 
+  <section id="pGen" hidden>
+    <div class="card"><h2>Auto generator</h2>
+      <p class="hint">The generator runs 3 times a day on GitHub. Choose here which categories it uses. Changes apply from the next run.</p>
+      <div class="chk"><input id="gEnabled" type="checkbox" checked><span>Auto generation is ON (untick to pause)</span></div>
+      <div class="chk"><input id="gUse" type="checkbox"><span>Use only the categories I select below</span></div>
+      <p class="hint" style="margin-top:-6px">If this is unticked, the generator picks categories by itself.</p>
+      <label>Prompts per run (1 to 6)</label><input id="gPer" type="number" min="1" max="6" value="3">
+      <label>Categories</label>
+      <div class="row" style="margin-bottom:8px"><button class="alt" id="gAll" style="flex:1">Select all</button><button class="alt" id="gNone" style="flex:1">Clear</button></div>
+      <div id="gList"></div>
+      <label>Add another category</label>
+      <div class="row"><input id="gNew" type="text" placeholder="Type a new category"><button class="alt" id="gAdd" style="flex:0 0 auto">Add</button></div>
+      <div class="hint" id="gCount" style="margin-top:10px"></div>
+      <div class="row" style="margin-top:12px"><button id="gSave">Save</button></div>
+    </div>
+    <div class="card"><h2>Run now</h2>
+      <p class="hint">Starts the generator right away using the settings above. Save first.</p>
+      <label>Generator repo (owner/name)</label><input id="gRepo" type="text" placeholder="mansoorkhan8185/prompt-book-auto">
+      <label>GitHub token (optional, to start from here)</label><input id="gTok" type="password" placeholder="github_pat_…" autocomplete="off">
+      <p class="hint">Without a token, Run now opens the GitHub page and you tap "Run workflow". To start it from here, create a fine-grained token on GitHub for this one repo with <b>Actions: Read and write</b>. It is kept only in this browser.</p>
+      <div class="row" style="margin-top:12px"><button id="gRun">Run now</button></div>
+      <div class="err" id="gErr"></div>
+    </div>
+  </section>
+
   <section id="pSettings" hidden>
     <div class="card"><h2>Ads</h2><p class="hint">Changes apply the next time the app opens.</p><div id="adsForm"></div><div class="row" style="margin-top:14px"><button id="saveAds">Save ads</button></div></div>
     <div class="card"><h2>Forced update</h2><p class="hint">Raise minVersionCode and turn enabled on to force older app versions to update.</p><div id="updForm"></div><div class="row" style="margin-top:14px"><button id="saveUpd">Save update settings</button></div></div>
@@ -220,10 +245,10 @@ onAuthStateChanged(auth, u => {
 /* ---------- tabs ---------- */
 function tab(name) {
   $('tPrompts').classList.toggle('on', name === 'p'); $('tApps').classList.toggle('on', name === 'a'); $('tBanners').classList.toggle('on', name === 'b'); $('tSettings').classList.toggle('on', name === 's');
-  show('pPrompts', name === 'p'); show('pApps', name === 'a'); show('pBanners', name === 'b'); show('pSettings', name === 's');
+  show('pPrompts', name === 'p'); show('pApps', name === 'a'); show('pBanners', name === 'b'); show('pSettings', name === 's'); show('pGen', name === 'g'); $('tGen').classList.toggle('on', name === 'g');
   show('pForm', false); show('aForm', false); show('bForm', false);
 }
-$('tPrompts').onclick = () => tab('p'); $('tApps').onclick = () => tab('a'); $('tBanners').onclick = () => tab('b'); $('tSettings').onclick = () => tab('s');
+$('tPrompts').onclick = () => tab('p'); $('tApps').onclick = () => tab('a'); $('tBanners').onclick = () => tab('b'); $('tSettings').onclick = () => tab('s'); $('tGen').onclick = () => { tab('g'); loadGen(); };
 
 /* ---------- prompts ---------- */
 async function loadPrompts() {
@@ -290,15 +315,64 @@ $('clrBtn').onclick = async () => {
   } catch (e) { alert(why(e)); }
 };
 
-/* Run generator: opens the GitHub Actions page where you tap "Run workflow" */
-$('genBtn').onclick = () => {
-  let repo = ''; try { repo = localStorage.getItem('genRepo') || ''; } catch (e) {}
-  const v = prompt('Your generator repo on GitHub (owner/name):', repo || 'mansoorkhan8185/prompt-book-auto');
-  if (!v) return;
-  repo = v.trim().replace(/^https?:\/\/github\.com\//i, '').replace(/^\/+|\/+$/g, '');
-  try { localStorage.setItem('genRepo', repo); } catch (e) {}
-  window.open('https://github.com/' + repo + '/actions/workflows/generate.yml', '_blank');
-  toast('Tap "Run workflow". Type a category to choose it yourself, or leave it empty for automatic.');
+/* ---------- Auto generator tab ---------- */
+let gSel = new Set(), gExtra = [];
+$('genBtn').onclick = () => { tab('g'); loadGen(); };
+function gAllCats() {
+  const have = [...new Set(items.map(x => x.category).filter(Boolean))];
+  return [...new Set([...MAJOR, ...have, ...gExtra, ...gSel])].sort((a, b) => a.localeCompare(b));
+}
+function gDraw() {
+  const box = $('gList'); box.innerHTML = '';
+  const counts = {}; items.forEach(x => { const k = (x.category || '').toLowerCase(); counts[k] = (counts[k] || 0) + 1; });
+  gAllCats().forEach(k => {
+    const d = document.createElement('div'); d.className = 'chk';
+    const c = document.createElement('input'); c.type = 'checkbox'; c.checked = gSel.has(k);
+    c.onchange = () => { c.checked ? gSel.add(k) : gSel.delete(k); gCountTxt(); };
+    const s = document.createElement('span'); s.textContent = k + ' (' + (counts[k.toLowerCase()] || 0) + ' prompts)';
+    d.append(c, s); box.appendChild(d);
+  });
+  gCountTxt();
+}
+function gCountTxt() { $('gCount').textContent = gSel.size + ' categor' + (gSel.size === 1 ? 'y' : 'ies') + ' selected'; }
+async function loadGen() {
+  try {
+    const g = (await get(ref(db, 'settings/generator'))).val() || {};
+    $('gEnabled').checked = g.enabled !== false; $('gUse').checked = !!g.useSelected; $('gPer').value = g.perRun || 3;
+    const list = Array.isArray(g.categories) ? g.categories : Object.values(g.categories || {});
+    gSel = new Set(list.filter(Boolean));
+  } catch (e) { $('gErr').textContent = why(e); }
+  try { $('gRepo').value = localStorage.getItem('genRepo') || 'mansoorkhan8185/prompt-book-auto'; $('gTok').value = localStorage.getItem('genTok') || ''; } catch (e) {}
+  gDraw();
+}
+$('gAll').onclick = () => { gAllCats().forEach(k => gSel.add(k)); gDraw(); };
+$('gNone').onclick = () => { gSel = new Set(); gDraw(); };
+$('gAdd').onclick = () => { const v = $('gNew').value.trim(); if (!v) return; gExtra.push(v); gSel.add(v); $('gNew').value = ''; gDraw(); };
+async function gSaveNow() {
+  const per = Math.min(6, Math.max(1, parseInt($('gPer').value, 10) || 3));
+  if ($('gUse').checked && !gSel.size) { toast('Select at least one category, or untick "Use only the categories I select"'); return false; }
+  const o = { enabled: $('gEnabled').checked, useSelected: $('gUse').checked, perRun: per, categories: [...gSel], updatedAt: Date.now() };
+  try { await set(ref(db, 'settings/generator'), o); $('gPer').value = per; toast('Saved ✓'); return true; }
+  catch (e) { $('gErr').textContent = why(e); return false; }
+}
+$('gSave').onclick = () => { $('gErr').textContent = ''; gSaveNow(); };
+$('gRun').onclick = async () => {
+  $('gErr').textContent = '';
+  if (!(await gSaveNow())) return;
+  let repo = $('gRepo').value.trim().replace(/^https?:\/\/github\.com\//i, '').replace(/^\/+|\/+$/g, '');
+  const tok = $('gTok').value.trim();
+  if (!repo) { $('gErr').textContent = 'Enter the generator repo, for example mansoorkhan8185/prompt-book-auto'; return; }
+  try { localStorage.setItem('genRepo', repo); localStorage.setItem('genTok', tok); } catch (e) {}
+  if (!tok) { window.open('https://github.com/' + repo + '/actions/workflows/generate.yml', '_blank'); toast('Tap "Run workflow" on GitHub'); return; }
+  try {
+    const r = await fetch('https://api.github.com/repos/' + repo + '/actions/workflows/generate.yml/dispatches', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + tok, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ref: 'main' })
+    });
+    if (r.status === 204) toast('Started ✓ New prompts appear in 1 to 2 minutes. Refresh the Prompts tab.');
+    else { const t = await r.text(); $('gErr').textContent = 'GitHub said ' + r.status + ': ' + t.slice(0, 200); }
+  } catch (e) { $('gErr').textContent = String(e && e.message || e); }
 };
 
 function setPrev(url) {
