@@ -85,7 +85,8 @@ h2{font-size:17px;margin:0 0 4px}
     <div class="card">
       <h2 id="formTitle">Add prompt</h2>
       <label>Title</label><input id="fTitle" type="text">
-      <label>Category</label><input id="fCat" type="text" list="cats"><datalist id="cats"></datalist>
+      <label>Category</label><select id="fCatSel"></select>
+      <input id="fCat" type="text" list="cats" placeholder="Or type a new category" style="margin-top:6px"><datalist id="cats"></datalist>
       <label>Prompt text</label><textarea id="fPrompt"></textarea>
       <label>Image link (https://…)</label><input id="fImage" type="text" placeholder="https://…">
       <div class="row" style="margin-top:8px">
@@ -258,7 +259,23 @@ function render() {
   });
   const cats = [...new Set(items.map(x => x.category).filter(Boolean))];
   $('cats').innerHTML = ''; cats.forEach(k => { const o = document.createElement('option'); o.value = k; $('cats').appendChild(o); });
+  fillCatSel(cats);
 }
+const MAJOR = ["Cinematic","Miniature & 3D","Product & Food","Sci-Fi & Fantasy","Nature & Wildlife","Funny Animation","Luxury Car","Cyberpunk","Anime","Islamic Art","Horror & Dark","Fashion & Beauty","Architecture & Interiors","Travel & Cities","Sports & Action","Emotional Stories","Abstract & Surreal","Retro & Vintage","Mythology & History","Space & Astronomy","Underwater World","Music & Dance"];
+function fillCatSel(cats) {
+  const all = [...new Set([...(cats || []), ...MAJOR])].sort((a, b) => a.localeCompare(b));
+  const sel = $('fCatSel'); sel.innerHTML = '';
+  const first = document.createElement('option'); first.value = ''; first.textContent = 'Choose a category…'; sel.appendChild(first);
+  all.forEach(k => { const o = document.createElement('option'); o.value = k; o.textContent = k; sel.appendChild(o); });
+  syncSel();
+}
+function syncSel() {
+  const sel = $('fCatSel'), v = $('fCat').value.trim().toLowerCase();
+  const m = [...sel.options].find(o => o.value && o.value.toLowerCase() === v);
+  sel.value = m ? m.value : '';
+}
+$('fCatSel').onchange = () => { if ($('fCatSel').value) $('fCat').value = $('fCatSel').value; };
+$('fCat').oninput = syncSel;
 $('q').oninput = render;
 $('flt').onchange = render;
 
@@ -281,7 +298,7 @@ $('genBtn').onclick = () => {
   repo = v.trim().replace(/^https?:\/\/github\.com\//i, '').replace(/^\/+|\/+$/g, '');
   try { localStorage.setItem('genRepo', repo); } catch (e) {}
   window.open('https://github.com/' + repo + '/actions/workflows/generate.yml', '_blank');
-  toast('Tap "Run workflow", then come back and refresh');
+  toast('Tap "Run workflow". Type a category to choose it yourself, or leave it empty for automatic.');
 };
 
 function setPrev(url) {
@@ -295,7 +312,7 @@ function openForm(x) {
   editKey = x ? x.key : null;
   $('formTitle').textContent = x ? 'Edit prompt' : 'Add prompt';
   $('fTitle').value = x ? (x.title || '') : '';
-  $('fCat').value = x ? (x.category || '') : '';
+  $('fCat').value = x ? (x.category || '') : ''; syncSel();
   $('fPrompt').value = x ? (x.prompt || '') : '';
   $('fImage').value = x ? (x.image || '') : '';
   $('fPop').checked = x ? (x.popular === true || x.popular === 'yes') : false;
