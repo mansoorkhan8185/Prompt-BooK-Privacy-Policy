@@ -93,9 +93,9 @@ h2{font-size:17px;margin:0 0 4px}
         <input id="fFile" type="file" accept="image/*">
         <button class="alt" id="upBtn" style="flex:0 0 auto">Upload image</button>
       </div>
-      <div class="row" style="margin-top:8px"><button class="alt" id="dbBtn">Attach without Storage</button></div>
+      <div class="row" style="margin-top:8px"><button class="alt" id="dbBtn">Attach image (free hosting)</button></div>
       <div class="hint" id="upMsg" style="margin-top:6px"></div>
-      <div class="hint"><b>Upload image</b> needs Firebase Storage. <b>Attach without Storage</b> stores a small copy of the picture inside the database (fine for a few images, makes the app load slower if used for many). Or paste a link above.</div>
+      <div class="hint"><b>Attach image (free hosting)</b> puts the picture on GitHub and saves only a short link. To use it, paste your GitHub token in the <b>Auto</b> tab (it needs <b>Actions</b> and <b>Contents</b> set to Read and write). Without a token the picture is stored inside the database, which makes the app slow. <b>Upload image</b> needs Firebase Storage. Or paste a link above.</div>
       <div class="preview" id="prev">No image</div>
       <div class="chk"><input id="fPop" type="checkbox"><span>Popular badge</span></div>
       <div class="chk"><input id="fNew" type="checkbox"><span>Show red "New" badge</span></div>
@@ -179,7 +179,7 @@ h2{font-size:17px;margin:0 0 4px}
       <p class="hint">Starts the generator right away using the settings above. Save first.</p>
       <label>Generator repo (owner/name)</label><input id="gRepo" type="text" placeholder="mansoorkhan8185/prompt-book-auto">
       <label>GitHub token (optional, to start from here)</label><input id="gTok" type="password" placeholder="github_pat_…" autocomplete="off">
-      <p class="hint">Without a token, Run now opens the GitHub page and you tap "Run workflow". To start it from here, create a fine-grained token on GitHub for this one repo with <b>Actions: Read and write</b>. It is kept only in this browser.</p>
+      <p class="hint">Without a token, Run now opens the GitHub page and you tap "Run workflow". To start it from here, create a fine-grained token on GitHub for this one repo with <b>Actions: Read and write</b> and <b>Contents: Read and write</b>. It is kept only in this browser and is also used to host your images.</p>
       <div class="row" style="margin-top:12px"><button id="gRun">Run now</button></div>
       <div class="err" id="gErr"></div>
     </div>
@@ -435,6 +435,26 @@ function shrink(file, maxW = 720, q = 0.82) {
 }
 function withTimeout(p, ms, msg) { return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(msg)), ms))]); }
 function blobToDataURL(b) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(new Error('Read failed')); r.readAsDataURL(b); }); }
+/* Host a picture for free in the generator's GitHub repo (needs the token saved in the Auto tab, with Contents: Read and write) */
+async function ghUpload(blob, ext) {
+  let repo = '', tok = '';
+  try { repo = (localStorage.getItem('genRepo') || 'mansoorkhan8185/prompt-book-auto').trim(); tok = (localStorage.getItem('genTok') || '').trim(); } catch (e) {}
+  if (!tok) return null;
+  const b64 = (await blobToDataURL(blob)).split(',')[1];
+  const name = 'images/up-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6) + '.' + ext;
+  const r = await fetch('https://api.github.com/repos/' + repo + '/contents/' + name, {
+    method: 'PUT',
+    headers: { 'Authorization': 'Bearer ' + tok, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: 'Add image from admin', content: b64 })
+  });
+  if (!r.ok) { const t = await r.text(); throw new Error('GitHub said ' + r.status + ': ' + t.slice(0, 160)); }
+  return 'https://raw.githubusercontent.com/' + repo + '/main/' + name;
+}
+async function hostOrEmbed(blob, ext) {
+  try { const u = await ghUpload(blob, ext); if (u) return { url: u, hosted: true }; }
+  catch (e) { return { url: await blobToDataURL(blob), hosted: false, err: why(e) }; }
+  return { url: await blobToDataURL(blob), hosted: false };
+}
 function busy(on, msg) { $('upBtn').disabled = on; $('dbBtn').disabled = on; $('upMsg').textContent = msg || ''; }
 $('upBtn').onclick = async () => {
   const f = $('fFile').files[0];
@@ -460,10 +480,10 @@ $('dbBtn').onclick = async () => {
   if (!f) { $('formErr').textContent = 'Choose an image first (tap Choose File).'; return; }
   busy(true, 'Preparing image…');
   try {
-    const blob = await shrink(f, 420, 0.7);
-    const url = await blobToDataURL(blob);
-    $('fImage').value = url; setPrev(url);
-    busy(false, 'Attached (' + Math.round(blob.size / 1024) + ' KB). Now tap Save.'); toast('Image attached ✓');
+    const blob = await shrink(f, 720, 0.78);
+    const r = await hostOrEmbed(blob, 'jpg');
+    $('fImage').value = r.url; setPrev(r.url);
+    busy(false, (r.hosted ? 'Hosted on GitHub' : 'Saved inside the database (slows the app). Add a GitHub token in the Auto tab to host images for free.') + (r.err ? ' [' + r.err + ']' : '') + ' (' + Math.round(blob.size / 1024) + ' KB). Now tap Save.'); toast(r.hosted ? 'Image hosted ✓' : 'Image attached');
   } catch (e) { busy(false, ''); $('formErr').textContent = 'Could not attach: ' + why(e); }
 };
 
@@ -510,7 +530,7 @@ $('aCancel').onclick = () => { show('aForm', false); show('pApps', true); };
 $('aAttach').onclick = async () => {
   const f = $('aFile').files[0]; $('aErr').textContent = '';
   if (!f) { $('aErr').textContent = 'Choose an image first.'; return; }
-  try { const url = await blobToDataURL(await shrink(f, 192, 0.8)); $('aIcon').value = url; setAPrev(url); toast('Icon attached ✓'); }
+  try { const r = await hostOrEmbed(await shrink(f, 192, 0.8), 'jpg'); $('aIcon').value = r.url; setAPrev(r.url); toast(r.hosted ? 'Icon hosted ✓' : 'Icon attached (inside database)'); if (r.err) $('aErr').textContent = r.err; }
   catch (e) { $('aErr').textContent = why(e); }
 };
 $('aSave').onclick = async () => {
@@ -564,7 +584,7 @@ $('bCancel').onclick = () => { show('bForm', false); show('pBanners', true); };
 $('bAttach').onclick = async () => {
   const f = $('bFile').files[0]; $('bErr').textContent = '';
   if (!f) { $('bErr').textContent = 'Choose an image first.'; return; }
-  try { const blob = await shrink(f, 640, 0.7); $('bImg').value = await blobToDataURL(blob); $('bMsg').textContent = 'Attached (' + Math.round(blob.size / 1024) + ' KB). Now tap Save.'; }
+  try { const blob = await shrink(f, 640, 0.75); const r = await hostOrEmbed(blob, 'jpg'); $('bImg').value = r.url; $('bMsg').textContent = (r.hosted ? 'Hosted on GitHub' : 'Saved inside the database') + ' (' + Math.round(blob.size / 1024) + ' KB). Now tap Save.'; if (r.err) $('bErr').textContent = r.err; }
   catch (e) { $('bErr').textContent = why(e); }
 };
 $('bSave').onclick = async () => {
